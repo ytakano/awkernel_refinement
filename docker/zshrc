@@ -43,7 +43,7 @@ precmd () {
 
 # show git's version
 export TERM=xterm
-export PROMPT="%n@sched_th %#> "
+export PROMPT="%n@awk_refine %#> "
 export RPROMPT='[%~]'
 export HISTFILE=$HOME/.zsh_history
 export HISTSIZE=10000

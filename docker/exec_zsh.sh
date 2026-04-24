@@ -1,4 +1,4 @@
 export USERNAME=$(whoami)
 export UID=$(id -u)
 export GID=$(id -g)
-docker compose exec scheduling_theory zsh
+docker compose exec awkernel_refinement zsh
