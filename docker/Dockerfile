@@ -22,6 +22,7 @@ RUN apt-get update && \
       libffi8ubuntu1 \
       libgmp10 \
       npm \
+      install texlive-full \
       clang qemu-system-arm qemu-system-x86 qemu-system-misc python3-pyelftools && \
     rm -rf /var/lib/apt/lists/*
 
