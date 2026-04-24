@@ -1,0 +1,4 @@
+[submodule "awkernel"]
+	path = awkernel
+	url = git@github.com:ytakano/awkernel.git
+	branch = refinement
