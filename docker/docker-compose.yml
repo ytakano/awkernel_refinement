@@ -1,0 +1,15 @@
+version: '3'
+services:
+  awkernel_refinement:
+    build:
+      context: .
+      args:
+        USERNAME: ${USERNAME}
+        UID: ${UID}
+        GID: ${GID}
+    user: "${UID}:${GID}"
+    stdin_open: true
+    tty: true
+    working_dir: "/awkernel_refinement"
+    volumes:
+      - "../:/awkernel_refinement"
