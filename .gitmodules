@@ -2,3 +2,9 @@
 	path = awkernel
 	url = git@github.com:ytakano/awkernel.git
 	branch = refinement
+[submodule "awkernel_refinemnet_doc"]
+	path = awkernel_refinemnet_doc
+	url = git@github.com:ytakano/awkernel_refinemnet_doc.git
+[submodule "scheduling_theory"]
+	path = scheduling_theory
+	url = git@github.com:ytakano/scheduling_theory.git
