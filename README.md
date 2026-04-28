@@ -50,10 +50,21 @@ downstream adapter obligations. It is not a separate top-level acceptance lane;
 current validation is organized around baseline trace compatibility and
 workload acceptance.
 
+Workload acceptance consumes emitted `sched_trace` and `task_trace` blocks as
+adapter evidence. Rows may carry a leading numeric `event_id`; the `event_id`
+is an ordering key for runtime capture, blocked-interval reconstruction, and
+diagnostics, not a common `OpState` field or `OpEvent` payload.
+
 The `_trace_vm` Cargo features used by the Awkernel build are userland and
 application selectors. They select the runtime-emitted workload application and
 enable the concrete trace hooks needed by the offline checkers; they are not a
 common-layer interface and do not add proof obligations to the common theory.
+
+Blocked-work observations follow the same layering. The common layer states
+only that blocked work is released but temporarily ineligible. Concrete
+`Block`/`Unblock` evidence, such as sleep or TCP/UDP I/O hooks, belongs to the
+adapter/runtime projection and is interpreted by the Awkernel workload checker
+as adapter-local blockedness evidence, not as a common-layer cause.
 
 ## Compatibility
 

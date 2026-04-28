@@ -29,6 +29,9 @@ natFromField field
   | not (null field) && all isDigit field = Right (natFromInteger (read field))
   | otherwise = Left ("expected natural number, got: " ++ show field)
 
+isNatField :: String -> Bool
+isNatField field = not (null field) && all isDigit field
+
 optionNatFromField :: String -> Either String (A.Option A.JobId)
 optionNatFromField "-" = Right A.None
 optionNatFromField field = A.Some <$> natFromField field
@@ -70,6 +73,7 @@ boolListFromCsv csv = listFromFields (splitOn ',' csv)
 
 eventFromFields :: String -> String -> String -> Either String A.OpEvent
 eventFromFields "Wakeup" a "-" = A.EvWakeup <$> natFromField a
+eventFromFields "Block" a "-" = A.EvBlock <$> natFromField a
 eventFromFields "RequestResched" a "-" = A.EvRequestResched <$> natFromField a
 eventFromFields "HandleResched" a "-" = A.EvHandleResched <$> natFromField a
 eventFromFields "Choose" a b = A.EvChoose <$> natFromField a <*> natFromField b
@@ -82,22 +86,44 @@ eventFromFields tag _ _ = Left ("unsupported event fields: " ++ show tag)
 schedTraceEntryFromFields :: [String] -> Either String A.AwkernelSchedTraceEntry
 schedTraceEntryFromFields [cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField] =
   schedTraceEntryFromCoreFields
+    "0"
     cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
     currentField needReschedField dispatchField
-schedTraceEntryFromFields [cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField, candidatePrefixCsv] = do
-  _candidatePrefix <- listFromCsv candidatePrefixCsv
-  schedTraceEntryFromCoreFields
-    cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
-    currentField needReschedField dispatchField
+schedTraceEntryFromFields [field0, field1, field2, field3, field4, field5, field6, field7, field8]
+  | isNatField field1 =
+      schedTraceEntryFromCoreFields
+        field0
+        field1 field2 field3 field4 field5 field6 field7 field8
+        field5 field7 field8
+  | otherwise =
+      let candidatePrefixCsv = field8 in do
+        _candidatePrefix <- listFromCsv candidatePrefixCsv
+        schedTraceEntryFromCoreFields
+          "0"
+          field0 field1 field2 field3 field4 field5 field6 field7
+          field4 field6 field7
 schedTraceEntryFromFields [cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField, workerCurrentCsv, workerNeedReschedCsv, workerDispatchCsv] =
   schedTraceEntryFromCoreFields
+    "0"
+    cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
+    workerCurrentCsv workerNeedReschedCsv workerDispatchCsv
+schedTraceEntryFromFields [eventIdField, cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField, candidatePrefixCsv] = do
+  _candidatePrefix <- listFromCsv candidatePrefixCsv
+  schedTraceEntryFromCoreFields
+    eventIdField
+    cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
+    currentField needReschedField dispatchField
+schedTraceEntryFromFields [eventIdField, cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField, workerCurrentCsv, workerNeedReschedCsv, workerDispatchCsv] =
+  schedTraceEntryFromCoreFields
+    eventIdField
     cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
     workerCurrentCsv workerNeedReschedCsv workerDispatchCsv
 schedTraceEntryFromFields fields =
-  Left ("expected 8, 9, or 11 TSV columns, got " ++ show (length fields) ++ " from " ++ show fields)
+  Left ("expected 8, 9, 10, 11, or 12 TSV sched_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
 
-schedTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> Either String A.AwkernelSchedTraceEntry
-schedTraceEntryFromCoreFields cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField workerCurrentCsv workerNeedReschedCsv workerDispatchCsv = do
+schedTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> Either String A.AwkernelSchedTraceEntry
+schedTraceEntryFromCoreFields eventIdField cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField workerCurrentCsv workerNeedReschedCsv workerDispatchCsv = do
+  eventId <- natFromField eventIdField
   cpu <- natFromField cpuField
   event <- eventFromFields eventTag eventA eventB
   current <- optionNatFromField currentField
@@ -107,7 +133,7 @@ schedTraceEntryFromCoreFields cpuField eventTag eventA eventB currentField runna
   workerCurrent <- optionListFromCsv workerCurrentCsv
   workerNeedResched <- boolListFromCsv workerNeedReschedCsv
   workerDispatch <- optionListFromCsv workerDispatchCsv
-  pure (A.MkAwkernelSchedTraceEntry cpu event current runnable needResched dispatch workerCurrent workerNeedResched workerDispatch)
+  pure (A.MkAwkernelSchedTraceEntry eventId cpu event current runnable needResched dispatch workerCurrent workerNeedResched workerDispatch)
 
 schedTraceFromLines :: Int -> [String] -> Either (Int, String) (A.List A.AwkernelSchedTraceEntry)
 schedTraceFromLines _ [] = Right A.Nil
@@ -123,20 +149,45 @@ taskTraceKindFromField "Spawn" = Right A.LkSpawn
 taskTraceKindFromField "Runnable" = Right A.LkRunnable
 taskTraceKindFromField "Choose" = Right A.LkChoose
 taskTraceKindFromField "Dispatch" = Right A.LkDispatch
-taskTraceKindFromField "Sleep" = Right A.LkSleep
+taskTraceKindFromField "Block" = Right A.LkBlock
+taskTraceKindFromField "Unblock" = Right A.LkUnblock
 taskTraceKindFromField "JoinWait" = Right A.LkJoinWait
 taskTraceKindFromField "JoinTargetReady" = Right A.LkJoinTargetReady
 taskTraceKindFromField "Complete" = Right A.LkComplete
 taskTraceKindFromField field = Left ("unsupported task_trace kind: " ++ show field)
 
+waitClassFromField :: String -> Either String (A.Option A.AwkernelWaitClass)
+waitClassFromField "-" = Right A.None
+waitClassFromField "Sleep" = Right (A.Some A.WcSleep)
+waitClassFromField "Io" = Right (A.Some A.WcIo)
+waitClassFromField "IO" = Right (A.Some A.WcIo)
+waitClassFromField field = Left ("unsupported wait_class: " ++ show field)
+
+unblockKindFromField :: String -> Either String (A.Option A.AwkernelUnblockKind)
+unblockKindFromField "-" = Right A.None
+unblockKindFromField "Ready" = Right (A.Some A.UkReady)
+unblockKindFromField "Timeout" = Right (A.Some A.UkTimeout)
+unblockKindFromField field = Left ("unsupported unblock_kind: " ++ show field)
+
 taskTraceEntryFromFields :: [String] -> Either String A.AwkernelTaskTraceEntry
 taskTraceEntryFromFields [kindField, subjectField, relatedField] = do
+  taskTraceEntryFromCoreFields "0" kindField subjectField relatedField "-" "-"
+taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField] = do
+  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField "-" "-"
+taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField] =
+  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField
+taskTraceEntryFromFields fields =
+  Left ("expected 3, 4, or 6 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
+
+taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> Either String A.AwkernelTaskTraceEntry
+taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField = do
+  eventId <- natFromField eventIdField
   kind <- taskTraceKindFromField kindField
   subject <- natFromField subjectField
   related <- optionNatFromField relatedField
-  pure (A.MkAwkernelTaskTraceEntry kind subject related)
-taskTraceEntryFromFields fields =
-  Left ("expected 3 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
+  waitClass <- waitClassFromField waitClassField
+  unblockKind <- unblockKindFromField unblockKindField
+  pure (A.MkAwkernelTaskTraceEntry eventId kind subject related waitClass unblockKind)
 
 taskTraceFromLines :: Int -> [String] -> Either (Int, String) (A.List A.AwkernelTaskTraceEntry)
 taskTraceFromLines _ [] = Right A.Nil
