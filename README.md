@@ -50,6 +50,11 @@ downstream adapter obligations. It is not a separate top-level acceptance lane;
 current validation is organized around baseline trace compatibility and
 workload acceptance.
 
+The `_trace_vm` Cargo features used by the Awkernel build are userland and
+application selectors. They select the runtime-emitted workload application and
+enable the concrete trace hooks needed by the offline checkers; they are not a
+common-layer interface and do not add proof obligations to the common theory.
+
 ## Compatibility
 
 The concrete runtime repository still supports compatibility entrypoints such as:

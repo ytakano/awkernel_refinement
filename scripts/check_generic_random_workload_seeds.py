@@ -14,7 +14,7 @@ from pathlib import Path
 
 MASK64 = (1 << 64) - 1
 DEFAULT_START_SEED = 0x4D59_5DF4_D0F3_3173
-TRACE_DONE_MARKER = "END_ROCQ_TRACE"
+TRACE_DONE_MARKER = "END_TASK_TRACE"
 
 
 @dataclass(frozen=True)
