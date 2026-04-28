@@ -91,6 +91,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
     BOOTSTRAP_HASKELL_INSTALL_HLS=1 \
     BOOTSTRAP_HASKELL_ADJUST_BASHRC=P sh
 
+RUN . "/home/${USERNAME}"/.ghcup/env && stack install aeson crypton
+
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 RUN . "/home/${USERNAME}"/.cargo/env && \
