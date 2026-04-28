@@ -21,12 +21,6 @@ Build the native workload checker:
 make target/adapter/haskell/workload_acceptance
 ```
 
-Build the native handoff checker:
-
-```sh
-make target/adapter/haskell/handoff_acceptance
-```
-
 Run the adapter contract tests:
 
 ```sh
@@ -45,17 +39,16 @@ Available workload scenarios:
 single_async nested_spawn multi_async sleep_wakeup generic_random
 ```
 
-Run handoff acceptance through QEMU:
-
-```sh
-make check-handoff-accept-qemu-2cpu
-```
-
 Run the generic random workload seed loop:
 
 ```sh
 make check-generic-random-workload-seeds GENERIC_RANDOM_RUNS=100
 ```
+
+Handoff reasoning is currently exposed as generic common-layer contracts and
+downstream adapter obligations. It is not a separate top-level acceptance lane;
+current validation is organized around baseline trace compatibility and
+workload acceptance.
 
 ## Compatibility
 
