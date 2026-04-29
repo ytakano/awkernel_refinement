@@ -123,6 +123,8 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         unblock_kind: str = "-",
         policy: str | None = None,
         policy_param: str | None = None,
+        deadline_wake_time: int | None = None,
+        deadline_absolute: int | None = None,
     ) -> str:
         if policy is None:
             policy = "PrioritizedFIFO" if kind == "Spawn" else "-"
@@ -138,6 +140,10 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
             policy,
             policy_param,
         ]
+        if deadline_wake_time is not None or deadline_absolute is not None:
+            if deadline_wake_time is None or deadline_absolute is None:
+                raise ValueError("RunnableDeadline rows need both wake time and absolute deadline")
+            fields.extend([str(deadline_wake_time), str(deadline_absolute)])
         return "\t".join(fields)
 
     def make_python_runhaskell_shim(self) -> pathlib.Path:
@@ -995,6 +1001,320 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
         "runhaskell not available",
     )
+    def test_single_global_edf_task_with_runnable_deadline_is_accepted(self) -> None:
+        code, payload, stdout, stderr = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=4),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        event_id=1,
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=10,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+        self.assertIn("accepted", stderr)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_two_global_edf_tasks_accept_earlier_absolute_deadline(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
+                    self.make_sched_trace_row(0, "Wakeup", "2", "-", "-", "1,2", "false", "-"),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1,2", "false", "1", event_id=1),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "2", "false", "-", event_id=2),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-", event_id=3),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", policy="GlobalEDF", policy_param="5"),
+                    self.make_task_trace_row("Spawn", 2, "1", policy="GlobalEDF", policy_param="20"),
+                    self.make_task_trace_row("Runnable", 1, "-"),
+                    self.make_task_trace_row("Runnable", 2, "-"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="5",
+                        deadline_wake_time=0,
+                        deadline_absolute=5,
+                    ),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        2,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="20",
+                        deadline_wake_time=0,
+                        deadline_absolute=20,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=1),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=2),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=3),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_wrong_global_edf_choose_order_reports_edf_fifo_rejection(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
+                    self.make_sched_trace_row(0, "Wakeup", "2", "-", "-", "1,2", "false", "-"),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1,2", "false", "1", event_id=1),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "2", "false", "-", event_id=2),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-", event_id=3),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", policy="GlobalEDF", policy_param="20"),
+                    self.make_task_trace_row("Spawn", 2, "1", policy="GlobalEDF", policy_param="5"),
+                    self.make_task_trace_row("Runnable", 1, "-"),
+                    self.make_task_trace_row("Runnable", 2, "-"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="20",
+                        deadline_wake_time=0,
+                        deadline_absolute=20,
+                    ),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        2,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="5",
+                        deadline_wake_time=0,
+                        deadline_absolute=5,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=1),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=2),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=3),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assert_common_failure(payload, kind="edf-fifo-rejection")
+        self.assertEqual(payload["sched_trace_index"], 2)
+        self.assertIsNone(payload["task_trace_index"])
+        self.assertEqual(payload["log_line_begin"], 4)
+        self.assertEqual(payload["log_line_end"], 4)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_mixed_edf_fifo_accepts_edf_chosen_over_fifo(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
+                    self.make_sched_trace_row(0, "Wakeup", "2", "-", "-", "1,2", "false", "-"),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1,2", "false", "1", event_id=1),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "2", "false", "-", event_id=2),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-", event_id=3),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row("Spawn", 2, "1", policy="PrioritizedFIFO", policy_param="0"),
+                    self.make_task_trace_row("Runnable", 1, "-"),
+                    self.make_task_trace_row("Runnable", 2, "-"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=10,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=1),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=2),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=3),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_mixed_edf_fifo_rejects_fifo_chosen_while_edf_visible(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
+                    self.make_sched_trace_row(0, "Wakeup", "2", "-", "-", "1,2", "false", "-"),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1,2", "false", "1", event_id=1),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "2", "false", "-", event_id=2),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-", event_id=3),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", policy="PrioritizedFIFO", policy_param="0"),
+                    self.make_task_trace_row("Spawn", 2, "1", policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row("Runnable", 1, "-"),
+                    self.make_task_trace_row("Runnable", 2, "-"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        2,
+                        "-",
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=10,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=1),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=2),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=3),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assert_common_failure(payload, kind="edf-fifo-rejection")
+        self.assertEqual(payload["sched_trace_index"], 2)
+        self.assertIsNone(payload["task_trace_index"])
+        self.assertEqual(payload["log_line_begin"], 4)
+        self.assertEqual(payload["log_line_end"], 4)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_mixed_edf_fifo_accepts_fifo_fallback_when_no_edf_candidate_visible(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=4),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="PrioritizedFIFO", policy_param="0"),
+                    self.make_task_trace_row("Spawn", 2, "1", event_id=1, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_invalid_runnable_deadline_reports_task_trace_location(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        event_id=1,
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=11,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assert_common_failure(payload, kind="edf-deadline-metadata-rejection")
+        self.assertIsNone(payload["sched_trace_index"])
+        self.assertEqual(payload["task_trace_index"], 1)
+        self.assertEqual(payload["log_line_begin"], 7)
+        self.assertEqual(payload["log_line_end"], 7)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
     def test_unsupported_policy_rejection_reports_task_trace_location(self) -> None:
         code, payload, stdout, _ = self.run_wrapper(
             log_text="\n".join(
@@ -1011,7 +1331,7 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                         1,
                         "-",
                         event_id=0,
-                        policy="GlobalEDF",
+                        policy="PrioritizedRR",
                         policy_param="100",
                     ),
                     "Runnable\t1\t-",
