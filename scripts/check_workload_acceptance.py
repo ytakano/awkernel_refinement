@@ -314,6 +314,10 @@ def normalize_runner_payload(
         if task_trace_index is None or sched_trace_index is not None:
             raise make_internal_checker_error("task-trace-parse-failure must carry only task_trace_index")
         log_line_begin, log_line_end = normalized_log_line(task_trace_start_line, task_trace_index)
+    elif kind == "unsupported-policy-rejection":
+        if task_trace_index is None or sched_trace_index is not None:
+            raise make_internal_checker_error("unsupported-policy-rejection must carry only task_trace_index")
+        log_line_begin, log_line_end = normalized_log_line(task_trace_start_line, task_trace_index)
     elif kind == "workload-family-rejection":
         if any(value is not None for value in [sched_trace_index, task_trace_index, log_line_begin, log_line_end]):
             raise make_internal_checker_error("workload-family-rejection must leave all location fields null")
