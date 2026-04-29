@@ -154,6 +154,7 @@ taskTraceKindFromField "Block" = Right A.LkBlock
 taskTraceKindFromField "Unblock" = Right A.LkUnblock
 taskTraceKindFromField "JoinWait" = Right A.LkJoinWait
 taskTraceKindFromField "JoinTargetReady" = Right A.LkJoinTargetReady
+taskTraceKindFromField "PeriodicJobComplete" = Right A.LkPeriodicJobComplete
 taskTraceKindFromField "Complete" = Right A.LkComplete
 taskTraceKindFromField field = Left ("unsupported task_trace kind: " ++ show field)
 
@@ -183,13 +184,26 @@ taskPolicyFromFields _ _ = Right (A.Some A.AtpUnsupported)
 
 taskTraceEntryFromFields :: [String] -> Either String A.AwkernelTaskTraceEntry
 taskTraceEntryFromFields [kindField, subjectField, relatedField] = do
-  taskTraceEntryFromCoreFields "0" kindField subjectField relatedField "-" "-" "-" "-" A.None
+  taskTraceEntryFromCoreFields "0" kindField subjectField relatedField "-" "-" "-" "-" A.None A.None
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField] = do
-  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField "-" "-" "-" "-" A.None
+  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField "-" "-" "-" "-" A.None A.None
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField] =
-  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField "-" "-" A.None
+  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField "-" "-" A.None A.None
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField] =
-  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField A.None
+  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField A.None A.None
+taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, loopIndexField] = do
+  loopIndex <- natFromField loopIndexField
+  taskTraceEntryFromCoreFields
+    eventIdField
+    kindField
+    subjectField
+    relatedField
+    waitClassField
+    unblockKindField
+    policyField
+    policyParamField
+    A.None
+    (A.Some loopIndex)
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, wakeTimeField, absoluteDeadlineField] = do
   wakeTime <- natFromField wakeTimeField
   absoluteDeadline <- natFromField absoluteDeadlineField
@@ -202,12 +216,28 @@ taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, w
     unblockKindField
     policyField
     policyParamField
-    (A.Some (A.MkAwkernelRunnableDeadlineMetadata wakeTime absoluteDeadline))
+    (A.Some (A.MkAwkernelRunnableDeadlineMetadata wakeTime absoluteDeadline A.None))
+    A.None
+taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, wakeTimeField, absoluteDeadlineField, loopIndexField] = do
+  wakeTime <- natFromField wakeTimeField
+  absoluteDeadline <- natFromField absoluteDeadlineField
+  loopIndex <- natFromField loopIndexField
+  taskTraceEntryFromCoreFields
+    eventIdField
+    kindField
+    subjectField
+    relatedField
+    waitClassField
+    unblockKindField
+    policyField
+    policyParamField
+    (A.Some (A.MkAwkernelRunnableDeadlineMetadata wakeTime absoluteDeadline (A.Some loopIndex)))
+    (A.Some loopIndex)
 taskTraceEntryFromFields fields =
-  Left ("expected 3, 4, 6, 8, or 10 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
+  Left ("expected 3, 4, 6, 8, 9, 10, or 11 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
 
-taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> A.Option A.AwkernelRunnableDeadlineMetadata -> Either String A.AwkernelTaskTraceEntry
-taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField deadlineMetadata = do
+taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> A.Option A.AwkernelRunnableDeadlineMetadata -> A.Option A.Nat -> Either String A.AwkernelTaskTraceEntry
+taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField deadlineMetadata periodicLoopIndex = do
   eventId <- natFromField eventIdField
   kind <- taskTraceKindFromField kindField
   subject <- natFromField subjectField
@@ -215,7 +245,7 @@ taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField wa
   waitClass <- waitClassFromField waitClassField
   unblockKind <- unblockKindFromField unblockKindField
   policy <- taskPolicyFromFields policyField policyParamField
-  pure (A.MkAwkernelTaskTraceEntry eventId kind subject related waitClass unblockKind policy deadlineMetadata)
+  pure (A.MkAwkernelTaskTraceEntry eventId kind subject related waitClass unblockKind policy deadlineMetadata periodicLoopIndex)
 
 taskTraceFromLines :: Int -> [String] -> Either (Int, String) (A.List A.AwkernelTaskTraceEntry)
 taskTraceFromLines _ [] = Right A.Nil

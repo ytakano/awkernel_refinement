@@ -112,7 +112,12 @@ Common layer の policy interface ではない。
 - `AwkernelTaskPolicy` の `AtpGlobalEDF relative_deadline` は supported EDF policy として扱う。
 - `AtpPrioritizedFIFO priority` は mixed-policy path の supported FIFO policy として扱う。
 - `RunnableDeadline` event または metadata record を task trace entry に追加する。
+- periodic task の同一 runtime task 再利用は adapter-local に
+  `RunnableDeadline(..., loop_index)` と `PeriodicJobComplete(task, loop_index)`
+  で logical job 列として識別する。Common layer の `JobId` は変更しない。
 - task summary に task policy table と EDF deadline table を保持する。
+- task summary に periodic job completion table を保持し、同じ
+  `(task, loop_index)` の二重 complete を reject する。
 - Common layer の job/interface は変更せず、adapter が `Job.job_abs_deadline` を
   trace 由来の `absolute_deadline` へ復元する。
 
@@ -128,6 +133,8 @@ Common layer の policy interface ではない。
 2. Task trace parser
 
    Haskell parser が `RunnableDeadline` metadata row を読めるようにする。
+   periodic row では既存10列 format の末尾に `loop_index` を追加した11列
+   `RunnableDeadline` と、9列 `PeriodicJobComplete` を読む。
    malformed deadline metadata は task-trace parse failure として task trace index を返す。
 
 3. Rocq workload acceptance
@@ -140,6 +147,8 @@ Common layer の policy interface ではない。
    - `first_non_edf_fifo_task_policy_index`
    - EDF deadline metadata well-formedness check
    - task ごとの latest release/deadline lookup
+   - periodic `loop_index` metadata consistency check
+   - periodic job completion uniqueness check
 
 4. Rocq scheduler-facing checker
 
@@ -176,7 +185,8 @@ Common layer の policy interface ではない。
    `awkernel_refinemnet_doc` と `scheduling_theory/design` に、EDF trace metadata は
    adapter-local evidence であり common interface ではないことを書く。
    実装済みの minimal boundary として、non-DAG GEDF release の
-   `RunnableDeadline` metadata、`GlobalEDF` / `PrioritizedFIFO` の supported
+   `RunnableDeadline` metadata、periodic logical job の `loop_index` と
+   `PeriodicJobComplete` metadata、`GlobalEDF` / `PrioritizedFIFO` の supported
    policy set、`PrioritizedRR` / `Panicked` / unknown policy の reject、
    `GlobalEDF` visible candidate 優先と FIFO fallback、DAG GEDF と multi-CPU EDF の
    scope exclusion、unsupported-policy / edf-deadline-metadata / edf-fifo
@@ -189,6 +199,8 @@ Common layer の policy interface ではない。
 - `GlobalEDF` Spawn が現行 format で policy metadata を出す。
 - non-DAG GEDF wake が `wake_time` と `absolute_deadline` を含む `RunnableDeadline` trace を出す。
 - `absolute_deadline = wake_time + relative_deadline` が trace 上で確認できる。
+- periodic task helper が `loop_index` 付き `RunnableDeadline` と
+  `PeriodicJobComplete` を出す。
 
 ### Rocq and extraction tests
 
@@ -207,6 +219,8 @@ Common layer の policy interface ではない。
 - FIFO fallback is accepted when no EDF candidate is visible.
 - `PrioritizedRR`, `Panicked`, unknown policy remain rejected.
 - malformed EDF deadline metadata reports `task_trace_index`.
+- periodic `RunnableDeadline` with a loop index is accepted.
+- duplicate `PeriodicJobComplete(task, loop_index)` is rejected.
 - blocked task の raw `Choose` は既存方針どおり spurious adapter row として扱い、
   blocked task の `Dispatch` は abstract scheduler service へ入れない。
 
