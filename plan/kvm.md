@@ -1,7 +1,9 @@
 # Awkernel KVM Trace VM
 
 This note records the concrete libvirt/KVM VM used to capture a 2 CPU
-`periodic_trace_vm` trace from Awkernel.
+`periodic_trace_vm` trace from Awkernel. The current runtime workload contains
+three periodic tasks with `(T,C,D)` values `(100,50,100) ms`, `(100,10,100) ms`,
+and `(500,100,500) ms`, and runs for 10 hyperperiods.
 
 ## Purpose
 
@@ -98,7 +100,12 @@ The downloaded log should contain:
 - `END_SCHED_TRACE`
 - `BEGIN_TASK_TRACE`
 - `END_TASK_TRACE`
-- `PeriodicJobComplete` rows for loop indices `0` through `9`
+- `PeriodicJobComplete` rows for two 100 ms-period tasks at loop indices `0`
+  through `49`
+- `PeriodicJobComplete` rows for one 500 ms-period task at loop indices `0`
+  through `9`
+- 110 total `PeriodicJobComplete` rows, where duplicate loop indices are valid
+  across different periodic task ids
 
 ## Validate the Trace
 
