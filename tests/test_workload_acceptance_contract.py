@@ -259,9 +259,9 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=2),
                     "END_TASK_TRACE",
                 ]
             )
@@ -412,9 +412,9 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=2),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -640,7 +640,7 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "Broken\t1\t-",
+                    "Runnable\t1\t-",
                     "END_TASK_TRACE",
                 ]
             ),
@@ -652,6 +652,33 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         self.assert_single_json_stdout(stdout)
         self.assert_common_failure(payload, kind="task-trace-parse-failure")
         self.assertIsNone(payload["sched_trace_index"])
+        self.assertEqual(payload["task_trace_index"], 0)
+        self.assertEqual(payload["log_line_begin"], 5)
+        self.assertEqual(payload["log_line_end"], 5)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_unsupported_task_trace_kind_stays_a_task_trace_parse_failure(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    "0\tWake\t1\t-\t-\t-\t-\t-",
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assert_common_failure(payload, kind="task-trace-parse-failure")
         self.assertEqual(payload["task_trace_index"], 0)
         self.assertEqual(payload["log_line_begin"], 5)
         self.assertEqual(payload["log_line_end"], 5)
@@ -741,7 +768,7 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
         "runhaskell not available",
     )
-    def test_unsupported_task_trace_kind_stays_a_task_trace_parse_failure(self) -> None:
+    def test_legacy_task_trace_columns_are_rejected(self) -> None:
         code, payload, stdout, _ = self.run_wrapper(
             log_text="\n".join(
                 [
@@ -749,7 +776,7 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "Wake\t1\t-",
+                    "Broken\t1\t-",
                     "END_TASK_TRACE",
                 ]
             ),
@@ -901,11 +928,11 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -936,11 +963,11 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -986,13 +1013,13 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "0\tSpawn\t2\t1\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Runnable\t2\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Spawn", 2, "1", event_id=1),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=2),
+                    self.make_task_trace_row("Runnable", 2, "-", event_id=3),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=4),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=5),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=6),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -1573,10 +1600,10 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                         policy="PrioritizedRR",
                         policy_param="100",
                     ),
-                    "Runnable\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -1607,11 +1634,11 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -1648,12 +1675,12 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "JoinTargetReady\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("JoinTargetReady", 1, "-", event_id=2),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=3),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=4),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=5),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -1684,14 +1711,14 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "2", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "0\tSpawn\t2\t1\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Runnable\t2\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "JoinWait\t1\t2",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Spawn", 2, "1", event_id=1),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=2),
+                    self.make_task_trace_row("Runnable", 2, "-", event_id=3),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=4),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=5),
+                    self.make_task_trace_row("JoinWait", 1, "2", event_id=6),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=7),
                     "END_TASK_TRACE",
                 ]
             ),
@@ -1721,11 +1748,11 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-"),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
-                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
-                    "Runnable\t1\t-",
-                    "Choose\t1\t-",
-                    "Dispatch\t1\t-",
-                    "Complete\t1\t-",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0),
+                    self.make_task_trace_row("Runnable", 1, "-", event_id=1),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
                     "END_TASK_TRACE",
                 ]
             ),

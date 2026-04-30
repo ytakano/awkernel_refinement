@@ -190,12 +190,6 @@ taskPolicyFromFields "Panicked" "-" = Right (A.Some A.AtpPanicked)
 taskPolicyFromFields _ _ = Right (A.Some A.AtpUnsupported)
 
 taskTraceEntryFromFields :: [String] -> Either String A.AwkernelTaskTraceEntry
-taskTraceEntryFromFields [kindField, subjectField, relatedField] = do
-  taskTraceEntryFromCoreFields "0" kindField subjectField relatedField "-" "-" "-" "-" A.None A.None
-taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField] = do
-  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField "-" "-" "-" "-" A.None A.None
-taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField] =
-  taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField "-" "-" A.None A.None
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField] =
   taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField A.None A.None
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, loopIndexField] = do
@@ -256,7 +250,7 @@ taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, w
     (A.Some (A.MkAwkernelRunnableDeadlineMetadata wakeTime absoluteDeadline (A.Some loopIndex)))
     (A.Some loopIndex)
 taskTraceEntryFromFields fields =
-  Left ("expected 3, 4, 6, 8, 9, 10, or 11 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
+  Left ("expected 8, 9, 10, or 11 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
 
 taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> A.Option A.AwkernelRunnableDeadlineMetadata -> A.Option Integer -> Either String A.AwkernelTaskTraceEntry
 taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField deadlineMetadata periodicLoopIndex = do
