@@ -19,7 +19,7 @@ WORKLOAD_TRACE_KVM_LOG ?= /tmp/awkernel_kvm_2cpu_$(WORKLOAD_SCENARIO).log
 WORKLOAD_TRACE_TIMEOUT ?= 120s
 GENERIC_TRACE_SEED ?=
 GENERIC_RANDOM_RUNS ?= 1
-WORKLOAD_SCENARIOS ?= single_async nested_spawn multi_async sleep_wakeup generic_random
+WORKLOAD_SCENARIOS ?= single_async nested_spawn multi_async sleep_wakeup generic_random periodic
 
 capture-baseline-log-qemu-2cpu:
 	$(MAKE) -C $(AWKERNEL_DIR) $@ BASELINE_TRACE_QEMU_LOG=$(BASELINE_TRACE_QEMU_LOG)
