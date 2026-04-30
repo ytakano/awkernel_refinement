@@ -15,18 +15,25 @@ splitOn delimiter = go []
       | c == delimiter = reverse acc : go [] cs
       | otherwise = go (c : acc) cs
 
-natFromInteger :: Integer -> A.Nat
-natFromInteger n
-  | n <= 0 = A.O
-  | otherwise = A.S (natFromInteger (n - 1))
+checkedNat :: String -> Integer -> Either String Integer
+checkedNat label n
+  | n >= 0 = Right n
+  | otherwise = Left (label ++ " must be nonnegative")
 
-natToInt :: A.Nat -> Int
-natToInt A.O = 0
-natToInt (A.S n) = 1 + natToInt n
+checkedNatInteger :: String -> Integer -> Either String Integer
+checkedNatInteger label n
+  | n >= 0 = Right n
+  | otherwise = Left (label ++ " must be nonnegative")
 
-natFromField :: String -> Either String A.Nat
+natCompare :: String -> (Integer -> Integer -> Bool) -> Integer -> Integer -> Bool
+natCompare label op left right =
+  case (checkedNatInteger (label ++ " left") left, checkedNatInteger (label ++ " right") right) of
+    (Right leftInteger, Right rightInteger) -> leftInteger `op` rightInteger
+    _ -> False
+
+natFromField :: String -> Either String Integer
 natFromField field
-  | not (null field) && all isDigit field = Right (natFromInteger (read field))
+  | not (null field) && all isDigit field = checkedNat "natural number" (read field)
   | otherwise = Left ("expected natural number, got: " ++ show field)
 
 isNatField :: String -> Bool
@@ -36,9 +43,9 @@ optionNatFromField :: String -> Either String (A.Option A.JobId)
 optionNatFromField "-" = Right A.None
 optionNatFromField field = A.Some <$> natFromField field
 
-boolFromField :: String -> Either String A.Bool
-boolFromField "true" = Right A.True
-boolFromField "false" = Right A.False
+boolFromField :: String -> Either String Bool
+boolFromField "true" = Right True
+boolFromField "false" = Right False
 boolFromField field = Left ("expected boolean, got: " ++ show field)
 
 listFromCsv :: String -> Either String (A.List A.JobId)
@@ -61,7 +68,7 @@ optionListFromCsv csv = listFromFields (splitOn ',' csv)
       tailNats <- listFromFields xs
       pure (A.Cons headNat tailNats)
 
-boolListFromCsv :: String -> Either String (A.List A.Bool)
+boolListFromCsv :: String -> Either String (A.List Bool)
 boolListFromCsv "" = Right A.Nil
 boolListFromCsv csv = listFromFields (splitOn ',' csv)
   where
@@ -251,7 +258,7 @@ taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, w
 taskTraceEntryFromFields fields =
   Left ("expected 3, 4, 6, 8, 9, 10, or 11 TSV task_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
 
-taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> A.Option A.AwkernelRunnableDeadlineMetadata -> A.Option A.Nat -> Either String A.AwkernelTaskTraceEntry
+taskTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> A.Option A.AwkernelRunnableDeadlineMetadata -> A.Option Integer -> Either String A.AwkernelTaskTraceEntry
 taskTraceEntryFromCoreFields eventIdField kindField subjectField relatedField waitClassField unblockKindField policyField policyParamField deadlineMetadata periodicLoopIndex = do
   eventId <- natFromField eventIdField
   kind <- taskTraceKindFromField kindField
@@ -272,9 +279,9 @@ taskTraceFromLines index (line:rest)
       pure (A.Cons record records)
 
 data PeriodicCompletionTiming = PeriodicCompletionTiming
-  { pctTask :: A.Nat
-  , pctLoop :: A.Nat
-  , pctActualReleaseTime :: A.Nat
+  { pctTask :: Integer
+  , pctLoop :: Integer
+  , pctActualReleaseTime :: Integer
   }
 
 periodicCompletionTimingFromFields :: [String] -> Either String (Maybe PeriodicCompletionTiming)
@@ -298,19 +305,19 @@ periodicCompletionTimingsFromLines index (line:rest)
       timings <- periodicCompletionTimingsFromLines (index + 1) rest
       pure (maybe timings (: timings) timing)
 
-deadlineMetadataBefore :: A.Nat -> A.Nat -> A.Nat -> A.List A.AwkernelTaskTraceEntry -> Maybe A.AwkernelRunnableDeadlineMetadata
+deadlineMetadataBefore :: Integer -> Integer -> Integer -> A.List A.AwkernelTaskTraceEntry -> Maybe A.AwkernelRunnableDeadlineMetadata
 deadlineMetadataBefore _ _ _ A.Nil = Nothing
 deadlineMetadataBefore eventId taskId loopIndex (A.Cons entry rest)
-  | natToInt (A.atte_event_id entry) >= natToInt eventId = Nothing
+  | natCompare "event id" (>=) (A.atte_event_id entry) eventId = Nothing
   | otherwise =
       case A.atte_kind entry of
         A.LkRunnableDeadline
-          | natToInt (A.atte_subject entry) == natToInt taskId ->
+          | natCompare "task id" (==) (A.atte_subject entry) taskId ->
               case A.atte_deadline_metadata entry of
                 A.Some metadata ->
                   case A.ardm_periodic_loop_index metadata of
                     A.Some metadataLoop
-                      | natToInt metadataLoop == natToInt loopIndex ->
+                      | natCompare "periodic loop index" (==) metadataLoop loopIndex ->
                           case deadlineMetadataBefore eventId taskId loopIndex rest of
                             Just laterMetadata -> Just laterMetadata
                             Nothing -> Just metadata
@@ -323,8 +330,8 @@ firstInvalidPeriodicCompletionTiming taskTrace timings = go 0 taskTrace
   where
     findTiming _ _ [] = Nothing
     findTiming taskId loopIndex (timing:rest)
-      | natToInt (pctTask timing) == natToInt taskId &&
-        natToInt (pctLoop timing) == natToInt loopIndex = Just timing
+      | natCompare "completion task id" (==) (pctTask timing) taskId &&
+        natCompare "completion loop index" (==) (pctLoop timing) loopIndex = Just timing
       | otherwise = findTiming taskId loopIndex rest
     go _ A.Nil = Nothing
     go index (A.Cons entry rest) =
@@ -336,7 +343,7 @@ firstInvalidPeriodicCompletionTiming taskTrace timings = go 0 taskTrace
                 Just timing ->
                   case deadlineMetadataBefore (A.atte_event_id entry) (A.atte_subject entry) loopIndex taskTrace of
                     Just metadata
-                      | natToInt (A.ardm_wake_time metadata) > natToInt (pctActualReleaseTime timing) -> Just index
+                      | natCompare "completion wake time" (>) (A.ardm_wake_time metadata) (pctActualReleaseTime timing) -> Just index
                     _ -> go (index + 1) rest
                 Nothing -> go (index + 1) rest
             A.None -> go (index + 1) rest
@@ -346,10 +353,10 @@ data Diagnostic = Diagnostic
   { accepted :: Bool
   , kind :: String
   , message :: String
-  , schedTraceIndex :: Maybe Int
-  , taskTraceIndex :: Maybe Int
-  , logLineBegin :: Maybe Int
-  , logLineEnd :: Maybe Int
+  , schedTraceIndex :: Maybe Integer
+  , taskTraceIndex :: Maybe Integer
+  , logLineBegin :: Maybe Integer
+  , logLineEnd :: Maybe Integer
   , backendLabel :: String
   , scenarioLabel :: Maybe String
   }
@@ -370,9 +377,9 @@ jsonField key value = "\"" ++ key ++ "\":" ++ value
 jsonString :: String -> String
 jsonString s = "\"" ++ jsonEscape s ++ "\""
 
-jsonMaybeInt :: Maybe Int -> String
-jsonMaybeInt Nothing = "null"
-jsonMaybeInt (Just n) = show n
+jsonMaybeInteger :: Maybe Integer -> String
+jsonMaybeInteger Nothing = "null"
+jsonMaybeInteger (Just n) = show n
 
 jsonMaybeString :: Maybe String -> String
 jsonMaybeString Nothing = "null"
@@ -388,10 +395,10 @@ renderDiagnostic diag =
       , jsonField "scenario" (jsonMaybeString (scenarioLabel diag))
       , jsonField "kind" (jsonString (kind diag))
       , jsonField "message" (jsonString (message diag))
-      , jsonField "sched_trace_index" (jsonMaybeInt (schedTraceIndex diag))
-      , jsonField "task_trace_index" (jsonMaybeInt (taskTraceIndex diag))
-      , jsonField "log_line_begin" (jsonMaybeInt (logLineBegin diag))
-      , jsonField "log_line_end" (jsonMaybeInt (logLineEnd diag))
+      , jsonField "sched_trace_index" (jsonMaybeInteger (schedTraceIndex diag))
+      , jsonField "task_trace_index" (jsonMaybeInteger (taskTraceIndex diag))
+      , jsonField "log_line_begin" (jsonMaybeInteger (logLineBegin diag))
+      , jsonField "log_line_end" (jsonMaybeInteger (logLineEnd diag))
       ]
 
 emitDiagnostic :: Diagnostic -> IO ()
@@ -417,7 +424,7 @@ mkSuccess backend scenario scheduleLabel =
     , scenarioLabel = scenario
     }
 
-mkFailure :: String -> Maybe String -> String -> String -> Maybe Int -> Maybe Int -> Diagnostic
+mkFailure :: String -> Maybe String -> String -> String -> Maybe Integer -> Maybe Integer -> Diagnostic
 mkFailure backend scenario diagKind diagMessage schedTraceIx taskTraceIx =
   Diagnostic
     { accepted = False
@@ -453,7 +460,7 @@ main = do
           emitDiagnostic
             (mkFailure backend scenario "sched-trace-parse-failure"
               ("failed to parse extracted sched_trace: " ++ err)
-              (Just idx) Nothing)
+              (Just (fromIntegral idx)) Nothing)
           exitFailure
         Right schedTrace ->
           case taskTraceFromLines 0 (lines taskTraceInput) of
@@ -461,7 +468,7 @@ main = do
               emitDiagnostic
                 (mkFailure backend scenario "task-trace-parse-failure"
                   ("failed to parse extracted task_trace: " ++ err)
-                  Nothing (Just idx))
+                  Nothing (Just (fromIntegral idx)))
               exitFailure
             Right taskTrace ->
               case periodicCompletionTimingsFromLines 0 (lines taskTraceInput) of
@@ -469,7 +476,7 @@ main = do
                   emitDiagnostic
                     (mkFailure backend scenario "task-trace-parse-failure"
                       ("failed to parse extracted task_trace periodic completion timing metadata: " ++ err)
-                      Nothing (Just idx))
+                      Nothing (Just (fromIntegral idx)))
                   exitFailure
                 Right periodicCompletionTimings ->
                   case firstInvalidPeriodicCompletionTiming taskTrace periodicCompletionTimings of
@@ -477,7 +484,7 @@ main = do
                       emitDiagnostic
                         (mkFailure backend scenario "edf-deadline-metadata-rejection"
                           "the emitted PeriodicJobComplete timing metadata precedes the logical RunnableDeadline wake_time"
-                          Nothing (Just timingIdx))
+                          Nothing (Just (fromIntegral timingIdx)))
                       exitFailure
                     Nothing ->
                       case A.first_non_edf_fifo_task_policy_index taskTrace of
@@ -485,7 +492,7 @@ main = do
                           emitDiagnostic
                             (mkFailure backend scenario "unsupported-policy-rejection"
                               "the emitted task_trace requests a policy that this adapter checker does not support"
-                              Nothing (Just (natToInt policyIdx)))
+                              Nothing (Just policyIdx))
                           exitFailure
                         A.None ->
                           case A.first_invalid_runnable_deadline_task_trace_index taskTrace of
@@ -493,19 +500,19 @@ main = do
                               emitDiagnostic
                                 (mkFailure backend scenario "edf-deadline-metadata-rejection"
                                   "the emitted task_trace has invalid RunnableDeadline metadata for the EDF/FIFO policy"
-                                  Nothing (Just (natToInt deadlineIdx)))
+                                  Nothing (Just deadlineIdx))
                               exitFailure
                             A.None ->
                               case A.awk_workload_accepts_sched_trace taskTrace schedTrace of
-                                A.False -> do
+                                False -> do
                                   emitDiagnostic
                                     (mkFailure backend scenario "workload-family-rejection"
                                       "workload acceptance rejected the emitted task_trace/sched_trace pair"
                                       Nothing Nothing)
                                   exitFailure
-                                A.True ->
+                                True ->
                                   case A.task_trace_all_global_fifo_policyb taskTrace of
-                                    A.True ->
+                                    True ->
                                       case A.first_non_scheduler_relation_sched_trace_index taskTrace schedTrace of
                                         A.None -> do
                                           emitDiagnostic (mkSuccess backend scenario "GlobalFIFO")
@@ -513,19 +520,19 @@ main = do
                                         A.Some relationIdx ->
                                           case A.first_non_fifo_sched_trace_index schedTrace of
                                             A.Some fifoIdx
-                                              | natToInt fifoIdx == natToInt relationIdx -> do
+                                              | fifoIdx == relationIdx -> do
                                                   emitDiagnostic
                                                     (mkFailure backend scenario "global-fifo-rejection"
                                                       "the emitted sched_trace violates the local GlobalFIFO choose-order check for the logical top-1 worker schedule"
-                                                      (Just (natToInt fifoIdx)) Nothing)
+                                                      (Just fifoIdx) Nothing)
                                                   exitFailure
                                             _ -> do
                                               emitDiagnostic
                                                 (mkFailure backend scenario "scheduler-relation-rejection"
                                                   "the emitted sched_trace violates the extracted GlobalFIFO scheduler-relation check for the logical top-1 worker schedule"
-                                                  (Just (natToInt relationIdx)) Nothing)
+                                                  (Just relationIdx) Nothing)
                                               exitFailure
-                                    A.False ->
+                                    False ->
                                       case A.first_non_edf_fifo_scheduler_relation_sched_trace_index taskTrace schedTrace of
                                         A.None -> do
                                           emitDiagnostic (mkSuccess backend scenario "EDF/FIFO")
@@ -534,5 +541,5 @@ main = do
                                           emitDiagnostic
                                             (mkFailure backend scenario "edf-fifo-rejection"
                                               "the emitted sched_trace violates the extracted EDF/FIFO scheduler-relation check for the logical top-1 worker schedule"
-                                              (Just (natToInt relationIdx)) Nothing)
+                                              (Just relationIdx) Nothing)
                                           exitFailure
