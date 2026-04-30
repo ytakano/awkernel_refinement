@@ -125,8 +125,14 @@ schedTraceEntryFromFields [eventIdField, cpuField, eventTag, eventA, eventB, cur
     eventIdField
     cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
     workerCurrentCsv workerNeedReschedCsv workerDispatchCsv
+schedTraceEntryFromFields [eventIdField, cpuField, eventTag, eventA, eventB, currentField, runnableCsv, needReschedField, dispatchField, workerCurrentCsv, workerNeedReschedCsv, workerDispatchCsv, timestampUsField] = do
+  _timestampUs <- natFromField timestampUsField
+  schedTraceEntryFromCoreFields
+    eventIdField
+    cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField
+    workerCurrentCsv workerNeedReschedCsv workerDispatchCsv
 schedTraceEntryFromFields fields =
-  Left ("expected 8, 9, 10, 11, or 12 TSV sched_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
+  Left ("expected 8, 9, 10, 11, 12, or 13 TSV sched_trace columns, got " ++ show (length fields) ++ " from " ++ show fields)
 
 schedTraceEntryFromCoreFields :: String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> String -> Either String A.AwkernelSchedTraceEntry
 schedTraceEntryFromCoreFields eventIdField cpuField eventTag eventA eventB currentField runnableCsv needReschedField dispatchField workerCurrentCsv workerNeedReschedCsv workerDispatchCsv = do

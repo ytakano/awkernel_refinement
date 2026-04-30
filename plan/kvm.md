@@ -100,6 +100,7 @@ The downloaded log should contain:
 - `END_SCHED_TRACE`
 - `BEGIN_TASK_TRACE`
 - `END_TASK_TRACE`
+- timestamped `sched_trace` rows with `timestamp_us` as the final TSV column
 - `PeriodicJobComplete` rows for two 100 ms-period tasks at loop indices `0`
   through `49`
 - `PeriodicJobComplete` rows for one 500 ms-period task at loop indices `0`

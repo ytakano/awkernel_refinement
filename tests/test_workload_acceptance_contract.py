@@ -89,6 +89,7 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         worker_need_resched: str | None = None,
         worker_dispatch_target: str | None = None,
         event_id: int | None = None,
+        timestamp_us: int | str | None = None,
     ) -> str:
         if worker_current is None:
             worker_current = current
@@ -111,6 +112,8 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         ]
         if event_id is not None:
             fields.insert(0, str(event_id))
+        if timestamp_us is not None:
+            fields.append(str(timestamp_us))
         return "\t".join(fields)
 
     @staticmethod
@@ -632,6 +635,46 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
         "runhaskell not available",
     )
+    def test_timestamped_sched_trace_row_with_malformed_timestamp_reports_parse_failure(self) -> None:
+        code, payload, stdout, stderr = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(
+                        0,
+                        "Wakeup",
+                        "1",
+                        "-",
+                        "-",
+                        "1",
+                        "false",
+                        "-",
+                        event_id=0,
+                        timestamp_us="not-a-timestamp",
+                    ),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    "0\tSpawn\t1\t-\t-\t-\tPrioritizedFIFO\t0",
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assert_common_failure(payload, kind="sched-trace-parse-failure")
+        self.assertEqual(payload["sched_trace_index"], 0)
+        self.assertIsNone(payload["task_trace_index"])
+        self.assertEqual(payload["log_line_begin"], 2)
+        self.assertEqual(payload["log_line_end"], 2)
+        self.assertIn("rejected", stderr)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
     def test_task_trace_parse_failure_reports_task_trace_index(self) -> None:
         code, payload, stdout, _ = self.run_wrapper(
             log_text="\n".join(
@@ -1048,6 +1091,56 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
                     self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
                     self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3),
                     self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=4),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        event_id=1,
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=10,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=4),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+        self.assertIn("accepted", stderr)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_timestamped_sched_trace_rows_are_accepted(self) -> None:
+        code, payload, stdout, stderr = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(
+                        0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0, timestamp_us=100
+                    ),
+                    self.make_sched_trace_row(
+                        1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2, timestamp_us=110
+                    ),
+                    self.make_sched_trace_row(
+                        1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3, timestamp_us=120
+                    ),
+                    self.make_sched_trace_row(
+                        1, "Complete", "1", "-", "-", "", "true", "-", event_id=4, timestamp_us=180
+                    ),
                     "END_SCHED_TRACE",
                     "BEGIN_TASK_TRACE",
                     self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
