@@ -126,6 +126,8 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         deadline_wake_time: int | None = None,
         deadline_absolute: int | None = None,
         periodic_loop_index: int | None = None,
+        actual_release_time: int | None = None,
+        execution_time: int | None = None,
     ) -> str:
         if policy is None:
             policy = "PrioritizedFIFO" if kind == "Spawn" else "-"
@@ -147,6 +149,12 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
             fields.extend([str(deadline_wake_time), str(deadline_absolute)])
         if periodic_loop_index is not None:
             fields.append(str(periodic_loop_index))
+        if actual_release_time is not None or execution_time is not None:
+            if kind != "PeriodicJobComplete":
+                raise ValueError("actual release/execution metadata is only for PeriodicJobComplete rows")
+            if periodic_loop_index is None or actual_release_time is None or execution_time is None:
+                raise ValueError("PeriodicJobComplete timing rows need loop, actual release, and execution time")
+            fields.extend([str(actual_release_time), str(execution_time)])
         return "\t".join(fields)
 
     def make_python_runhaskell_shim(self) -> pathlib.Path:
@@ -1090,6 +1098,58 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
         "runhaskell not available",
     )
+    def test_periodic_job_complete_runtime_timing_metadata_is_adapter_local(self) -> None:
+        code, payload, stdout, stderr = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=5),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        event_id=1,
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=0,
+                        deadline_absolute=10,
+                        periodic_loop_index=0,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row(
+                        "PeriodicJobComplete",
+                        1,
+                        "-",
+                        event_id=4,
+                        periodic_loop_index=0,
+                        actual_release_time=0,
+                        execution_time=7,
+                    ),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=5),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, ACCEPTED_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["kind"], "accepted")
+        self.assertIn("accepted", stderr)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
     def test_periodic_job_complete_requires_unique_loop_index(self) -> None:
         code, payload, stdout, _ = self.run_wrapper(
             log_text="\n".join(
@@ -1130,6 +1190,93 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         self.assertFalse(payload["accepted"])
         self.assertEqual(payload["kind"], "workload-family-rejection")
         self.assertIsNone(payload["sched_trace_index"])
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_periodic_job_complete_runtime_timing_rejects_before_wake_time(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Choose", "1", "1", "-", "1", "false", "1", event_id=2),
+                    self.make_sched_trace_row(1, "Dispatch", "1", "1", "1", "", "false", "-", event_id=3),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=5),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "RunnableDeadline",
+                        1,
+                        "-",
+                        event_id=1,
+                        policy="GlobalEDF",
+                        policy_param="10",
+                        deadline_wake_time=10,
+                        deadline_absolute=20,
+                        periodic_loop_index=0,
+                    ),
+                    self.make_task_trace_row("Choose", 1, "-", event_id=2),
+                    self.make_task_trace_row("Dispatch", 1, "-", event_id=3),
+                    self.make_task_trace_row(
+                        "PeriodicJobComplete",
+                        1,
+                        "-",
+                        event_id=4,
+                        periodic_loop_index=0,
+                        actual_release_time=9,
+                        execution_time=7,
+                    ),
+                    self.make_task_trace_row("Complete", 1, "-", event_id=5),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["kind"], "edf-deadline-metadata-rejection")
+        self.assertEqual(payload["task_trace_index"], 4)
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_periodic_job_complete_runtime_metadata_still_uses_common_row_validation(self) -> None:
+        code, payload, stdout, _ = self.run_wrapper(
+            log_text="\n".join(
+                [
+                    "BEGIN_SCHED_TRACE",
+                    self.make_sched_trace_row(0, "Wakeup", "1", "-", "-", "1", "false", "-", event_id=0),
+                    self.make_sched_trace_row(1, "Complete", "1", "-", "-", "", "true", "-", event_id=5),
+                    "END_SCHED_TRACE",
+                    "BEGIN_TASK_TRACE",
+                    self.make_task_trace_row("Spawn", 1, "-", event_id=0, policy="GlobalEDF", policy_param="10"),
+                    self.make_task_trace_row(
+                        "PeriodicJobComplete",
+                        2,
+                        "-",
+                        event_id=4,
+                        periodic_loop_index=0,
+                        actual_release_time=0,
+                        execution_time=7,
+                    ),
+                    "END_TASK_TRACE",
+                ]
+            ),
+            runhaskell=self.runhaskell,
+            runner=self.runner,
+            checker_dir=self.checker_dir,
+        )
+        self.assertEqual(code, RUNNER_FAILURE_EXIT)
+        self.assert_single_json_stdout(stdout)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["kind"], "workload-family-rejection")
 
     @unittest.skipUnless(
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,

@@ -204,6 +204,21 @@ taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, w
     policyParamField
     A.None
     (A.Some loopIndex)
+taskTraceEntryFromFields [eventIdField, "PeriodicJobComplete", subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, loopIndexField, actualReleaseTimeField, executionTimeField] = do
+  loopIndex <- natFromField loopIndexField
+  _actualReleaseTime <- natFromField actualReleaseTimeField
+  _executionTime <- natFromField executionTimeField
+  taskTraceEntryFromCoreFields
+    eventIdField
+    "PeriodicJobComplete"
+    subjectField
+    relatedField
+    waitClassField
+    unblockKindField
+    policyField
+    policyParamField
+    A.None
+    (A.Some loopIndex)
 taskTraceEntryFromFields [eventIdField, kindField, subjectField, relatedField, waitClassField, unblockKindField, policyField, policyParamField, wakeTimeField, absoluteDeadlineField] = do
   wakeTime <- natFromField wakeTimeField
   absoluteDeadline <- natFromField absoluteDeadlineField
@@ -255,6 +270,77 @@ taskTraceFromLines index (line:rest)
       record <- either (Left . (,) index) Right (taskTraceEntryFromFields (splitOn '\t' line))
       records <- taskTraceFromLines (index + 1) rest
       pure (A.Cons record records)
+
+data PeriodicCompletionTiming = PeriodicCompletionTiming
+  { pctTask :: A.Nat
+  , pctLoop :: A.Nat
+  , pctActualReleaseTime :: A.Nat
+  }
+
+periodicCompletionTimingFromFields :: [String] -> Either String (Maybe PeriodicCompletionTiming)
+periodicCompletionTimingFromFields [_, "PeriodicJobComplete", subjectField, _, _, _, _, _, loopIndexField, actualReleaseTimeField, executionTimeField] = do
+  subject <- natFromField subjectField
+  loopIndex <- natFromField loopIndexField
+  actualReleaseTime <- natFromField actualReleaseTimeField
+  _executionTime <- natFromField executionTimeField
+  pure (Just (PeriodicCompletionTiming subject loopIndex actualReleaseTime))
+periodicCompletionTimingFromFields fields =
+  case taskTraceEntryFromFields fields of
+    Left err -> Left err
+    Right _ -> Right Nothing
+
+periodicCompletionTimingsFromLines :: Int -> [String] -> Either (Int, String) [PeriodicCompletionTiming]
+periodicCompletionTimingsFromLines _ [] = Right []
+periodicCompletionTimingsFromLines index (line:rest)
+  | null line = periodicCompletionTimingsFromLines (index + 1) rest
+  | otherwise = do
+      timing <- either (Left . (,) index) Right (periodicCompletionTimingFromFields (splitOn '\t' line))
+      timings <- periodicCompletionTimingsFromLines (index + 1) rest
+      pure (maybe timings (: timings) timing)
+
+deadlineMetadataBefore :: A.Nat -> A.Nat -> A.Nat -> A.List A.AwkernelTaskTraceEntry -> Maybe A.AwkernelRunnableDeadlineMetadata
+deadlineMetadataBefore _ _ _ A.Nil = Nothing
+deadlineMetadataBefore eventId taskId loopIndex (A.Cons entry rest)
+  | natToInt (A.atte_event_id entry) >= natToInt eventId = Nothing
+  | otherwise =
+      case A.atte_kind entry of
+        A.LkRunnableDeadline
+          | natToInt (A.atte_subject entry) == natToInt taskId ->
+              case A.atte_deadline_metadata entry of
+                A.Some metadata ->
+                  case A.ardm_periodic_loop_index metadata of
+                    A.Some metadataLoop
+                      | natToInt metadataLoop == natToInt loopIndex ->
+                          case deadlineMetadataBefore eventId taskId loopIndex rest of
+                            Just laterMetadata -> Just laterMetadata
+                            Nothing -> Just metadata
+                    _ -> deadlineMetadataBefore eventId taskId loopIndex rest
+                A.None -> deadlineMetadataBefore eventId taskId loopIndex rest
+        _ -> deadlineMetadataBefore eventId taskId loopIndex rest
+
+firstInvalidPeriodicCompletionTiming :: A.List A.AwkernelTaskTraceEntry -> [PeriodicCompletionTiming] -> Maybe Int
+firstInvalidPeriodicCompletionTiming taskTrace timings = go 0 taskTrace
+  where
+    findTiming _ _ [] = Nothing
+    findTiming taskId loopIndex (timing:rest)
+      | natToInt (pctTask timing) == natToInt taskId &&
+        natToInt (pctLoop timing) == natToInt loopIndex = Just timing
+      | otherwise = findTiming taskId loopIndex rest
+    go _ A.Nil = Nothing
+    go index (A.Cons entry rest) =
+      case A.atte_kind entry of
+        A.LkPeriodicJobComplete ->
+          case A.atte_periodic_loop_index entry of
+            A.Some loopIndex ->
+              case findTiming (A.atte_subject entry) loopIndex timings of
+                Just timing ->
+                  case deadlineMetadataBefore (A.atte_event_id entry) (A.atte_subject entry) loopIndex taskTrace of
+                    Just metadata
+                      | natToInt (A.ardm_wake_time metadata) > natToInt (pctActualReleaseTime timing) -> Just index
+                    _ -> go (index + 1) rest
+                Nothing -> go (index + 1) rest
+            A.None -> go (index + 1) rest
+        _ -> go (index + 1) rest
 
 data Diagnostic = Diagnostic
   { accepted :: Bool
@@ -378,59 +464,75 @@ main = do
                   Nothing (Just idx))
               exitFailure
             Right taskTrace ->
-              case A.first_non_edf_fifo_task_policy_index taskTrace of
-                A.Some policyIdx -> do
+              case periodicCompletionTimingsFromLines 0 (lines taskTraceInput) of
+                Left (idx, err) -> do
                   emitDiagnostic
-                    (mkFailure backend scenario "unsupported-policy-rejection"
-                      "the emitted task_trace requests a policy that this adapter checker does not support"
-                      Nothing (Just (natToInt policyIdx)))
+                    (mkFailure backend scenario "task-trace-parse-failure"
+                      ("failed to parse extracted task_trace periodic completion timing metadata: " ++ err)
+                      Nothing (Just idx))
                   exitFailure
-                A.None ->
-                  case A.first_invalid_runnable_deadline_task_trace_index taskTrace of
-                    A.Some deadlineIdx -> do
+                Right periodicCompletionTimings ->
+                  case firstInvalidPeriodicCompletionTiming taskTrace periodicCompletionTimings of
+                    Just timingIdx -> do
                       emitDiagnostic
                         (mkFailure backend scenario "edf-deadline-metadata-rejection"
-                          "the emitted task_trace has invalid RunnableDeadline metadata for the EDF/FIFO policy"
-                          Nothing (Just (natToInt deadlineIdx)))
+                          "the emitted PeriodicJobComplete timing metadata precedes the logical RunnableDeadline wake_time"
+                          Nothing (Just timingIdx))
                       exitFailure
-                    A.None ->
-                      case A.awk_workload_accepts_sched_trace taskTrace schedTrace of
-                        A.False -> do
+                    Nothing ->
+                      case A.first_non_edf_fifo_task_policy_index taskTrace of
+                        A.Some policyIdx -> do
                           emitDiagnostic
-                            (mkFailure backend scenario "workload-family-rejection"
-                              "workload acceptance rejected the emitted task_trace/sched_trace pair"
-                              Nothing Nothing)
+                            (mkFailure backend scenario "unsupported-policy-rejection"
+                              "the emitted task_trace requests a policy that this adapter checker does not support"
+                              Nothing (Just (natToInt policyIdx)))
                           exitFailure
-                        A.True ->
-                          case A.task_trace_all_global_fifo_policyb taskTrace of
-                            A.True ->
-                              case A.first_non_scheduler_relation_sched_trace_index taskTrace schedTrace of
-                                A.None -> do
-                                  emitDiagnostic (mkSuccess backend scenario "GlobalFIFO")
-                                  exitSuccess
-                                A.Some relationIdx ->
-                                  case A.first_non_fifo_sched_trace_index schedTrace of
-                                    A.Some fifoIdx
-                                      | natToInt fifoIdx == natToInt relationIdx -> do
-                                          emitDiagnostic
-                                            (mkFailure backend scenario "global-fifo-rejection"
-                                              "the emitted sched_trace violates the local GlobalFIFO choose-order check for the logical top-1 worker schedule"
-                                              (Just (natToInt fifoIdx)) Nothing)
-                                          exitFailure
-                                    _ -> do
-                                      emitDiagnostic
-                                        (mkFailure backend scenario "scheduler-relation-rejection"
-                                          "the emitted sched_trace violates the extracted GlobalFIFO scheduler-relation check for the logical top-1 worker schedule"
-                                          (Just (natToInt relationIdx)) Nothing)
-                                      exitFailure
-                            A.False ->
-                              case A.first_non_edf_fifo_scheduler_relation_sched_trace_index taskTrace schedTrace of
-                                A.None -> do
-                                  emitDiagnostic (mkSuccess backend scenario "EDF/FIFO")
-                                  exitSuccess
-                                A.Some relationIdx -> do
+                        A.None ->
+                          case A.first_invalid_runnable_deadline_task_trace_index taskTrace of
+                            A.Some deadlineIdx -> do
+                              emitDiagnostic
+                                (mkFailure backend scenario "edf-deadline-metadata-rejection"
+                                  "the emitted task_trace has invalid RunnableDeadline metadata for the EDF/FIFO policy"
+                                  Nothing (Just (natToInt deadlineIdx)))
+                              exitFailure
+                            A.None ->
+                              case A.awk_workload_accepts_sched_trace taskTrace schedTrace of
+                                A.False -> do
                                   emitDiagnostic
-                                    (mkFailure backend scenario "edf-fifo-rejection"
-                                      "the emitted sched_trace violates the extracted EDF/FIFO scheduler-relation check for the logical top-1 worker schedule"
-                                      (Just (natToInt relationIdx)) Nothing)
+                                    (mkFailure backend scenario "workload-family-rejection"
+                                      "workload acceptance rejected the emitted task_trace/sched_trace pair"
+                                      Nothing Nothing)
                                   exitFailure
+                                A.True ->
+                                  case A.task_trace_all_global_fifo_policyb taskTrace of
+                                    A.True ->
+                                      case A.first_non_scheduler_relation_sched_trace_index taskTrace schedTrace of
+                                        A.None -> do
+                                          emitDiagnostic (mkSuccess backend scenario "GlobalFIFO")
+                                          exitSuccess
+                                        A.Some relationIdx ->
+                                          case A.first_non_fifo_sched_trace_index schedTrace of
+                                            A.Some fifoIdx
+                                              | natToInt fifoIdx == natToInt relationIdx -> do
+                                                  emitDiagnostic
+                                                    (mkFailure backend scenario "global-fifo-rejection"
+                                                      "the emitted sched_trace violates the local GlobalFIFO choose-order check for the logical top-1 worker schedule"
+                                                      (Just (natToInt fifoIdx)) Nothing)
+                                                  exitFailure
+                                            _ -> do
+                                              emitDiagnostic
+                                                (mkFailure backend scenario "scheduler-relation-rejection"
+                                                  "the emitted sched_trace violates the extracted GlobalFIFO scheduler-relation check for the logical top-1 worker schedule"
+                                                  (Just (natToInt relationIdx)) Nothing)
+                                              exitFailure
+                                    A.False ->
+                                      case A.first_non_edf_fifo_scheduler_relation_sched_trace_index taskTrace schedTrace of
+                                        A.None -> do
+                                          emitDiagnostic (mkSuccess backend scenario "EDF/FIFO")
+                                          exitSuccess
+                                        A.Some relationIdx -> do
+                                          emitDiagnostic
+                                            (mkFailure backend scenario "edf-fifo-rejection"
+                                              "the emitted sched_trace violates the extracted EDF/FIFO scheduler-relation check for the logical top-1 worker schedule"
+                                              (Just (natToInt relationIdx)) Nothing)
+                                          exitFailure
