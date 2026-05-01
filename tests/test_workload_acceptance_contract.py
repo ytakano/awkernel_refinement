@@ -177,6 +177,22 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         shim_path.chmod(0o755)
         return shim_path
 
+    def run_haskell_probe(self, source: str) -> subprocess.CompletedProcess[str]:
+        tmpdir = tempfile.TemporaryDirectory(prefix="workload-accept-haskell-probe-")
+        self.addCleanup(tmpdir.cleanup)
+        probe_path = pathlib.Path(tmpdir.name) / "Probe.hs"
+        probe_path.write_text(source, encoding="utf-8")
+        return subprocess.run(
+            [
+                self.runhaskell or "runhaskell",
+                "-i" + str(self.checker_dir),
+                str(probe_path),
+            ],
+            text=True,
+            capture_output=True,
+            cwd=self.adapter_root,
+        )
+
     def run_wrapper(
         self,
         *,
@@ -868,6 +884,79 @@ class WorkloadAcceptanceContractTest(unittest.TestCase):
         self.assertIsNone(payload["task_trace_index"])
         self.assertIsNone(payload["log_line_begin"])
         self.assertIsNone(payload["log_line_end"])
+
+    @unittest.skipUnless(
+        (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,
+        "runhaskell not available",
+    )
+    def test_strict_rejects_and_spurious_entrypoint_accepts_blocked_dispatch(self) -> None:
+        result = self.run_haskell_probe(
+            """
+module Main where
+
+import qualified AwkernelWorkloadAcceptance as A
+
+list :: [a] -> A.List a
+list [] = A.Nil
+list (x:xs) = A.Cons x (list xs)
+
+task :: Integer -> A.AwkernelTaskTraceKind -> A.Option A.AwkernelWaitClass -> A.Option A.AwkernelUnblockKind -> A.AwkernelTaskTraceEntry
+task eventId kind waitClass unblockKind =
+  A.MkAwkernelTaskTraceEntry eventId kind 1 A.None waitClass unblockKind A.None A.None A.None
+
+spawn :: A.AwkernelTaskTraceEntry
+spawn =
+  A.MkAwkernelTaskTraceEntry 0 A.LkSpawn 1 A.None A.None A.None
+    (A.Some (A.AtpPrioritizedFIFO 0)) A.None A.None
+
+sched :: Integer -> Integer -> A.OpEvent -> A.Option A.JobId -> [A.JobId] -> Bool -> A.Option A.JobId -> A.AwkernelSchedTraceEntry
+sched eventId cpu event current runnable needResched dispatchTarget =
+  A.MkAwkernelSchedTraceEntry eventId cpu event current (list runnable) needResched dispatchTarget A.Nil A.Nil A.Nil
+
+taskTrace :: A.List A.AwkernelTaskTraceEntry
+taskTrace =
+  list
+    [ spawn
+    , task 1 A.LkRunnable A.None A.None
+    , task 2 A.LkChoose A.None A.None
+    , task 3 A.LkDispatch A.None A.None
+    , task 4 A.LkBlock (A.Some A.WcSleep) A.None
+    , task 5 A.LkChoose A.None A.None
+    , task 6 A.LkDispatch A.None A.None
+    , task 10 A.LkUnblock (A.Some A.WcSleep) (A.Some A.UkTimeout)
+    , task 12 A.LkRunnable A.None A.None
+    , task 13 A.LkChoose A.None A.None
+    , task 14 A.LkDispatch A.None A.None
+    , task 15 A.LkComplete A.None A.None
+    ]
+
+schedTrace :: A.List A.AwkernelSchedTraceEntry
+schedTrace =
+  list
+    [ sched 0 0 (A.EvWakeup 1) A.None [1] False A.None
+    , sched 2 1 (A.EvChoose 1 1) A.None [1] False (A.Some 1)
+    , sched 3 1 (A.EvDispatch 1 1) (A.Some 1) [] False A.None
+    , sched 5 1 (A.EvChoose 1 1) A.None [1] False (A.Some 1)
+    , sched 6 1 (A.EvDispatch 1 1) (A.Some 1) [] False A.None
+    , sched 12 0 (A.EvWakeup 1) A.None [1] False A.None
+    , sched 13 1 (A.EvChoose 1 1) A.None [1] False (A.Some 1)
+    , sched 14 1 (A.EvDispatch 1 1) (A.Some 1) [] False A.None
+    , sched 15 1 (A.EvComplete 1) A.None [] True A.None
+    ]
+
+main :: IO ()
+main =
+  case
+    ( A.awk_workload_accepts_sched_trace taskTrace schedTrace
+    , A.awk_workload_accepts_sched_trace_spurious taskTrace schedTrace
+    )
+  of
+    (False, True) -> putStrLn "strict-rejects-spurious-accepts"
+    actual -> fail ("unexpected acceptance result: " ++ show actual)
+"""
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "strict-rejects-spurious-accepts")
 
     @unittest.skipUnless(
         (os.environ.get("WORKLOAD_ACCEPT_RUNHASKELL") or shutil.which("runhaskell")) is not None,

@@ -503,7 +503,7 @@ main = do
                                   Nothing (Just deadlineIdx))
                               exitFailure
                             A.None ->
-                              case A.awk_workload_accepts_sched_trace taskTrace schedTrace of
+                              case A.awk_workload_accepts_sched_trace_spurious taskTrace schedTrace of
                                 False -> do
                                   emitDiagnostic
                                     (mkFailure backend scenario "workload-family-rejection"
