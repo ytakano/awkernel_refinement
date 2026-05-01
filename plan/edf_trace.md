@@ -23,6 +23,9 @@ Common layer が保持するのは、抽象 scheduler relation、candidate sourc
 valid schedule、adapter contract である。EDF trace 固有の policy metadata、
 `wake_time`、`absolute_deadline`、unsupported-policy diagnostic は
 `OpState`, `OpEvent`, `OSProjection`, `OSLabeledProjection` に入れない。
+Common が見る runnable は抽象 runnable view だけである。`sched_trace.runnable`
+は adapter-facing evidence であり、Awkernel adapter が scheduler queue-visible
+state から導く。`TaskInfo.state` と queue layout は common interface ではない。
 
 ### Adapter layer
 
@@ -35,6 +38,7 @@ EDF および EDF/FIFO 混在受理で adapter が負う責務は以下である
 - `GlobalEDF` / `PrioritizedFIFO` 混在を supported policy set として扱う。
 - `PrioritizedRR`, `Panicked`, unknown policy を v1 では reject する。
 - non-DAG EDF task の release/deadline metadata を復元する。
+- `sched_trace.runnable` を scheduler queue-visible state 由来の abstract runnable view として扱う。
 - blocked task に対する adapter-local spurious row filtering を既存 FIFO path と同じ境界で適用する。
 - `GlobalEDF` candidate が存在する row では、候補集合と選択結果が EDF scheduler relation を満たすことを検査する。
 - `GlobalEDF` candidate が存在しない row では、既存 FIFO checker と同じ規則で `PrioritizedFIFO` selection を検査する。
@@ -43,6 +47,8 @@ EDF および EDF/FIFO 混在受理で adapter が負う責務は以下である
 ### Concrete runtime layer
 
 Concrete runtime layer は adapter が必要とする observable を出す。
+Runtime は queue-visible runnable state を trace に出してよいが、`TaskInfo.state`
+や concrete queue layout そのものを common-facing observable にはしない。
 
 `TaskTraceEvent::Spawn` の `GlobalEDF <relative_deadline>` は task の policy 設定を示す
 metadata として維持する。ただし runtime GEDF は release ごとに absolute deadline を計算するため、
