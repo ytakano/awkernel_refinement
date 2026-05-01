@@ -66,6 +66,13 @@ only that blocked work is released but temporarily ineligible. Concrete
 adapter/runtime projection and is interpreted by the Awkernel workload checker
 as adapter-local blockedness evidence, not as a common-layer cause.
 
+Dispatch-model selection is also layered. `DispatchModel` is a common selector
+type with strict and spurious modes, but spurious dispatch is not a common
+`OpEvent` constructor and not a separate `op_step`. The Awkernel workload
+adapter selects the spurious model only to accept raw blocked dispatch rows as
+runtime-local evidence. Those rows contribute no abstract progress, completion,
+service accounting, or scheduler candidate relation.
+
 ## Compatibility
 
 The concrete runtime repository still supports compatibility entrypoints such as:

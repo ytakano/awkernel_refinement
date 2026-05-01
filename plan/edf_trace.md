@@ -44,6 +44,12 @@ EDF および EDF/FIFO 混在受理で adapter が負う責務は以下である
 - `GlobalEDF` candidate が存在しない row では、既存 FIFO checker と同じ規則で `PrioritizedFIFO` selection を検査する。
 - 受理済み trace を common scheduler-relation adapter contract へ package する。
 
+`DispatchModel` は common type だが、ここで使う Spurious selection は
+Awkernel adapter の受理方針であって、common `OpEvent` や `op_step` を増やすものではない。
+blocked/spurious dispatch row は runtime-local evidence として parser/checker 境界で
+保持できるが、EDF/FIFO scheduler relation、candidate relation、service、
+completion、progress の witness には寄与しない。
+
 ### Concrete runtime layer
 
 Concrete runtime layer は adapter が必要とする observable を出す。
@@ -229,6 +235,8 @@ Common layer の policy interface ではない。
 - duplicate `PeriodicJobComplete(task, loop_index)` is rejected.
 - blocked task の raw `Choose` は既存方針どおり spurious adapter row として扱い、
   blocked task の `Dispatch` は abstract scheduler service へ入れない。
+- Spurious dispatch model で受理された blocked `Dispatch` は common `EvDispatch`
+  ではなく、progress/completion/service/candidate relation を作らない。
 
 ### End-to-end commands
 
