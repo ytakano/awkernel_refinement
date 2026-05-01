@@ -19,6 +19,7 @@ WORKLOAD_TRACE_KVM_LOG ?= /tmp/awkernel_kvm_2cpu_$(WORKLOAD_SCENARIO).log
 WORKLOAD_TRACE_TIMEOUT ?= 120s
 GENERIC_TRACE_SEED ?=
 GENERIC_RANDOM_RUNS ?= 1
+GENERIC_RANDOM_OVMF_PATH ?= $(shell if [ -r $(AWKERNEL_DIR)/target/ovmf/x64/vars.fd ]; then printf '%s' $(AWKERNEL_DIR)/target/ovmf/x64; elif [ -r /tmp/awkernel_ovmf_x64/vars.fd ]; then printf '%s' /tmp/awkernel_ovmf_x64; elif [ -r $$HOME/.ovmfpath ]; then cat $$HOME/.ovmfpath; else printf '%s' $(AWKERNEL_DIR)/target/ovmf/x64; fi)
 WORKLOAD_SCENARIOS ?= single_async nested_spawn multi_async sleep_wakeup generic_random periodic
 
 capture-baseline-log-qemu-2cpu:
@@ -98,4 +99,5 @@ check-generic-random-workload-seeds: $(WORKLOAD_ACCEPT_BIN)
 	python3 scripts/check_generic_random_workload_seeds.py \
 		--checker-bin $(WORKLOAD_ACCEPT_BIN) \
 		--awkernel-dir $(AWKERNEL_DIR) \
+		--ovmf-path $(GENERIC_RANDOM_OVMF_PATH) \
 		$(GENERIC_RANDOM_RUNS)

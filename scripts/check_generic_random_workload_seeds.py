@@ -185,13 +185,25 @@ def capture_qemu_log(args: argparse.Namespace, seed_arg: str, index: int) -> tup
     ovmf_path = path_under(root, args.ovmf_path)
     log_path = Path(f"/tmp/awkernel_qemu_2cpu_generic_random_{index}_{seed_arg[2:]}.log")
 
-    shutil.copyfile(ovmf_path / "vars.fd", ovmf_path / "vars_qemu.fd")
+    code_fd = ovmf_path / "code.fd"
+    vars_fd = ovmf_path / "vars.fd"
+    if not code_fd.exists() or not vars_fd.exists():
+        missing = [str(path) for path in (code_fd, vars_fd) if not path.exists()]
+        print(
+            "missing OVMF firmware file(s): "
+            + ", ".join(missing)
+            + "\nSet --ovmf-path or GENERIC_RANDOM_OVMF_PATH to a directory containing code.fd and vars.fd.",
+            file=sys.stderr,
+        )
+        return 1, log_path
+
+    shutil.copyfile(vars_fd, ovmf_path / "vars_qemu.fd")
     log_path.unlink(missing_ok=True)
 
     command = [
         args.qemu,
         "-drive",
-        f"if=pflash,format=raw,readonly=on,file={ovmf_path / 'code.fd'}",
+        f"if=pflash,format=raw,readonly=on,file={code_fd}",
         "-drive",
         f"if=pflash,format=raw,file={ovmf_path / 'vars_qemu.fd'}",
         "-drive",
